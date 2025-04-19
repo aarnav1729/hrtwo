@@ -1,62 +1,97 @@
-
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmployeeStats, TeamStats } from "@/types";
-import { 
-  calculateEmployeeStats, 
-  calculateTeamStats, 
-  getEarliestCheckIn, 
-  getLatestCheckOut,
-  getLiveActivity
-} from "@/lib/mock-data";
+import { Clock, Award, Timer, Users } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { PunctualityLeaderboard } from "@/components/PunctualityLeaderboard";
 import { ConsistencyLeaderboard } from "@/components/ConsistencyLeaderboard";
 import { TeamLeaderboard } from "@/components/TeamLeaderboard";
 import { BadgeDisplay } from "@/components/BadgeDisplay";
 import { LiveActivityFeed } from "@/components/LiveActivityFeed";
-import { Clock, Users, Timer, Award } from "lucide-react";
+import {
+  calculateTeamStats,
+  getEarliestCheckIn,
+  getLatestCheckOut,
+  getLiveActivity,
+} from "@/lib/mock-data";
+import { EmployeeStats, TeamStats } from "@/types";
 
 const Dashboard = () => {
-  const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([]);
-  const [teamStats, setTeamStats] = useState<TeamStats[]>([]);
-  const [earliestCheckIn, setEarliestCheckIn] = useState<{ employee: any, time: Date } | null>(null);
-  const [latestCheckOut, setLatestCheckOut] = useState<{ employee: any, time: Date } | null>(null);
-  const [liveActivity, setLiveActivity] = useState<any[]>([]);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [currentUser] = useState(() => {
-    const stats = calculateEmployeeStats();
-    return stats[Math.floor(Math.random() * stats.length)];
-  });
+  const [employeeStats, setEmployeeStats]     = useState<EmployeeStats[]>([]);
+  const [teamStats, setTeamStats]             = useState<TeamStats[]>([]);
+  const [earliestCheckIn, setEarliestCheckIn] = useState<{
+    employee: any;
+    time: Date;
+  } | null>(null);
+  const [latestCheckOut, setLatestCheckOut]   = useState<{
+    employee: any;
+    time: Date;
+  } | null>(null);
+  const [liveActivity, setLiveActivity]       = useState<any[]>([]);
+  const [currentTime, setCurrentTime]         = useState(new Date());
 
-  // Update data every minute
+  // real work‑progress from server
+  const [inTime, setInTime]           = useState<Date | null>(null);
+  const [hoursWorked, setHoursWorked] = useState(0);
+  const [minutesLeft, setMinutesLeft] = useState(9 * 60);
+
+  // mock fallback for the other cards
+  const [currentUser] = useState(() => ({
+    hoursWorkedToday: 0,
+    minutesLeftToday: 9 * 60,
+    punctualityScore: 0,
+    consistencyStreak: { count: 0, isActive: false },
+    isOnline: false,
+    badges: [],
+  }));
+
+  // ─── fetch inTime & math done server‑side ────────────────────────
   useEffect(() => {
-    const updateData = () => {
-      setEmployeeStats(calculateEmployeeStats());
+    fetch("http://localhost:3001/api/work-progress?empCode=30874")
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then(({ inTime: str, hoursWorked, minutesLeft }) => {
+        console.log("💡 Work‑progress from server:", { str, hoursWorked, minutesLeft });
+        setInTime(new Date(str));
+        setHoursWorked(hoursWorked);
+        setMinutesLeft(minutesLeft);
+      })
+      .catch((err) => console.error("Failed to load work‑progress:", err));
+  }, []);
+
+  // ─── refresh everything every minute ────────────────────────────
+  useEffect(() => {
+    const update = () => {
+      setEmployeeStats([]); // wire up next
       setTeamStats(calculateTeamStats());
       setEarliestCheckIn(getEarliestCheckIn());
       setLatestCheckOut(getLatestCheckOut());
       setLiveActivity(getLiveActivity());
       setCurrentTime(new Date());
     };
-
-    updateData();
-    const interval = setInterval(updateData, 60000);
-    return () => clearInterval(interval);
+    update();
+    const id = setInterval(update, 60_000);
+    return () => clearInterval(id);
   }, []);
 
-  // Format time function
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
+  const isOnline = inTime !== null && inTime.toDateString() === new Date().toDateString();
+
+  const formatTime = (d: Date) =>
+    d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900">Time Titan Dashboard</h1>
+        <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
+          <h1 className="text-3xl font-bold text-gray-900">hrtwo by nav</h1>
           <div className="text-right">
             <p className="text-sm text-gray-500">Current Time</p>
             <p className="text-xl font-semibold">{formatTime(currentTime)}</p>
@@ -64,25 +99,32 @@ const Dashboard = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
-        {/* Personal Stats Section */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* Your Status */}
         <section className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">Your Status</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">
+            Your Status
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Work Progress (NOW correct) */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
-                  <Clock className="mr-2 h-5 w-5" />
-                  Work Progress
+                  <Clock className="mr-2 h-5 w-5" /> Work Progress
                 </CardTitle>
-                <CardDescription>9-hour shift</CardDescription>
+                <CardDescription>9‑hour shift</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  <Progress value={(9 * 60 - currentUser.minutesLeftToday) / (9 * 60) * 100} className="h-2" />
+                  <Progress
+                    value={((9 * 60 - minutesLeft) / (9 * 60)) * 100}
+                    className="h-2"
+                  />
                   <div className="flex justify-between text-sm">
-                    <span>{currentUser.hoursWorkedToday.toFixed(1)} hours worked</span>
-                    <span>{Math.floor(currentUser.minutesLeftToday / 60)}h {currentUser.minutesLeftToday % 60}m left</span>
+                    <span>{hoursWorked.toFixed(1)} hours worked</span>
+                    <span>
+                      {Math.floor(minutesLeft / 60)}h {minutesLeft % 60}m left
+                    </span>
                   </div>
                 </div>
               </CardContent>
@@ -140,15 +182,17 @@ const Dashboard = () => {
                 <CardDescription>Your current status</CardDescription>
               </CardHeader>
               <CardContent>
-                <Badge className={`
-                  ${currentUser.isOnline 
-                    ? "bg-green-100 text-green-800 hover:bg-green-100" 
-                    : "bg-gray-100 text-gray-800 hover:bg-gray-100"}
-                `}>
-                  {currentUser.isOnline ? "At Work" : "Not Checked In"}
+                <Badge
+                  className={`${
+                    isOnline
+                      ? "bg-green-100 text-green-800"
+                      : "bg-gray-100 text-gray-800"
+                  }`}
+                >
+                  {isOnline ? "At Work" : "Not Checked In"}
                 </Badge>
                 <div className="mt-4">
-                  <BadgeDisplay badges={currentUser.badges} />
+                  <BadgeDisplay badges={[]} />
                 </div>
               </CardContent>
             </Card>
