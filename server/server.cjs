@@ -6,9 +6,11 @@ const mssql = require("mssql");
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Enable CORS and JSON parsing
 app.use(cors());
 app.use(express.json());
 
+// Database configuration
 const dbConfig = {
   user: "SPOT_USER",
   password: "Premier#3801",
@@ -22,21 +24,24 @@ const dbConfig = {
   },
 };
 
+// Shared connection pool
 const poolPromise = mssql.connect(dbConfig);
 
+// ─── Work‑Progress Endpoint ────────────────────────────────────────
+// Returns punch‑in (inTime), hoursWorked, minutesLeft for empCode
 app.get("/api/work-progress", async (req, res) => {
   try {
-    // Default to Aarnav Singh’s code
     const empCode = req.query.empCode || "30874";
-    const pool     = await poolPromise;
-    const result   = await pool
+    const pool = await poolPromise;
+
+    const result = await pool
       .request()
       .input("empCode", mssql.VarChar, empCode)
       .query(`
         SELECT TOP 1
           CONVERT(varchar(19), ATT_DATE, 120) AS inTimeStr
         FROM IDSL_PEL.DBO.SRAW
-        WHERE EMP_CODE   = @empCode
+        WHERE EMP_CODE      = @empCode
           AND LOWER(IN_OUT) = 'in'
         ORDER BY ATT_DATE DESC;
       `);
@@ -45,18 +50,17 @@ app.get("/api/work-progress", async (req, res) => {
       return res.status(404).json({ message: "No punch‑in record found" });
     }
 
-    // inTimeStr comes back like "2025-04-19 11:02:00"
-    const inTimeStr = result.recordset[0].inTimeStr;
+    const inTimeStr = result.recordset[0].inTimeStr; // "YYYY-MM-DD HH:mm:ss"
     console.log("▶️  Fetched inTimeStr:", inTimeStr);
 
-    // Parse as LOCAL time, not UTC
+    // Parse as local
     const inDate = new Date(inTimeStr);
     const now    = new Date();
     const diffMs = now.getTime() - inDate.getTime();
 
-    const hoursWorked     = diffMs / (1000 * 60 * 60);
-    const totalShiftMins  = 9 * 60;
-    const minutesLeft     = Math.max(totalShiftMins - hoursWorked * 60, 0);
+    const hoursWorked    = diffMs / (1000 * 60 * 60);
+    const totalShiftMins = 9 * 60;
+    const minutesLeft    = Math.max(totalShiftMins - hoursWorked * 60, 0);
 
     res.json({
       inTime:      inTimeStr,
@@ -69,6 +73,42 @@ app.get("/api/work-progress", async (req, res) => {
   }
 });
 
+// ─── Earliest Check‑In Endpoint ────────────────────────────────────
+// Returns who checked‑in first today in AREA_ID = '30048'
+app.get("/api/earliest-checkin", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+
+    const result = await pool.request().query(`
+      SELECT TOP 1
+        CARDNO,
+        ATT_DATE AS checkInTime
+      FROM IDSL_PEL.DBO.SRAW
+      WHERE AREA_ID        = '30048'
+        AND LOWER(IN_OUT)  = 'in'
+        AND CONVERT(date, ATT_DATE) = CONVERT(date, GETDATE())
+      ORDER BY ATT_DATE ASC;
+    `);
+
+    if (!result.recordset.length) {
+      return res.status(404).json({ message: "No check‑in found today" });
+    }
+
+    const { CARDNO, checkInTime } = result.recordset[0];
+    const iso = new Date(checkInTime).toISOString();
+    console.log("▶️  Earliest check‑in:", { CARDNO, iso });
+
+    res.json({
+      cardNo:      CARDNO,
+      checkInTime: iso,
+    });
+  } catch (error) {
+    console.error("❌ Error in /api/earliest-checkin:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// ─── Start Server ─────────────────────────────────────────────────
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
 });

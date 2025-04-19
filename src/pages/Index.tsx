@@ -16,7 +16,6 @@ import { BadgeDisplay } from "@/components/BadgeDisplay";
 import { LiveActivityFeed } from "@/components/LiveActivityFeed";
 import {
   calculateTeamStats,
-  getEarliestCheckIn,
   getLatestCheckOut,
   getLiveActivity,
 } from "@/lib/mock-data";
@@ -36,22 +35,22 @@ const Dashboard = () => {
   const [liveActivity, setLiveActivity]       = useState<any[]>([]);
   const [currentTime, setCurrentTime]         = useState(new Date());
 
-  // real work‑progress from server
+  // ─── Real work‑progress from server ────────────────────────────────
   const [inTime, setInTime]           = useState<Date | null>(null);
   const [hoursWorked, setHoursWorked] = useState(0);
   const [minutesLeft, setMinutesLeft] = useState(9 * 60);
 
-  // mock fallback for the other cards
+  // ─── mock fallback for other cards ──────────────────────────────────
   const [currentUser] = useState(() => ({
-    hoursWorkedToday: 0,
-    minutesLeftToday: 9 * 60,
-    punctualityScore: 0,
-    consistencyStreak: { count: 0, isActive: false },
-    isOnline: false,
-    badges: [],
+    hoursWorkedToday:    0,
+    minutesLeftToday:    9 * 60,
+    punctualityScore:    0,
+    consistencyStreak:   { count: 0, isActive: false },
+    isOnline:            false,
+    badges:              [],
   }));
 
-  // ─── fetch inTime & math done server‑side ────────────────────────
+  // ─── Fetch work‑progress ───────────────────────────────────────────
   useEffect(() => {
     fetch("http://localhost:3001/api/work-progress?empCode=30874")
       .then((res) => {
@@ -67,12 +66,29 @@ const Dashboard = () => {
       .catch((err) => console.error("Failed to load work‑progress:", err));
   }, []);
 
-  // ─── refresh everything every minute ────────────────────────────
+  // ─── Fetch earliest check‑in ────────────────────────────────────────
+  // (runs on mount and whenever currentTime updates)
+  useEffect(() => {
+    fetch("http://localhost:3001/api/earliest-checkin")
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then(({ cardNo, checkInTime }) => {
+        console.log("💡 Earliest check‑in from server:", { cardNo, checkInTime });
+        setEarliestCheckIn({
+          employee: { name: cardNo },
+          time:     new Date(checkInTime),
+        });
+      })
+      .catch((err) => console.error("Failed to load earliest check‑in:", err));
+  }, [currentTime]);
+
+  // ─── Refresh the rest every minute ─────────────────────────────────
   useEffect(() => {
     const update = () => {
-      setEmployeeStats([]); // wire up next
+      setEmployeeStats([]); // will wire up next
       setTeamStats(calculateTeamStats());
-      setEarliestCheckIn(getEarliestCheckIn());
       setLatestCheckOut(getLatestCheckOut());
       setLiveActivity(getLiveActivity());
       setCurrentTime(new Date());
@@ -82,8 +98,11 @@ const Dashboard = () => {
     return () => clearInterval(id);
   }, []);
 
-  const isOnline = inTime !== null && inTime.toDateString() === new Date().toDateString();
+  // ─── Determine “At Work” status ────────────────────────────────────
+  const isOnline =
+    inTime !== null && inTime.toDateString() === new Date().toDateString();
 
+  // ─── Time formatter ────────────────────────────────────────────────
   const formatTime = (d: Date) =>
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -106,7 +125,8 @@ const Dashboard = () => {
             Your Status
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Work Progress (NOW correct) */}
+
+            {/* Work Progress */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
@@ -130,6 +150,7 @@ const Dashboard = () => {
               </CardContent>
             </Card>
 
+            {/* Punctuality Score */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
@@ -141,15 +162,16 @@ const Dashboard = () => {
               <CardContent>
                 <div className="text-3xl font-bold">{currentUser.punctualityScore}%</div>
                 <div className="text-sm text-gray-500 mt-1">
-                  {currentUser.punctualityScore > 90 
-                    ? "Excellent! Keep it up!" 
-                    : currentUser.punctualityScore > 70 
-                      ? "Good standing" 
-                      : "Needs improvement"}
+                  {currentUser.punctualityScore > 90
+                    ? "Excellent! Keep it up!"
+                    : currentUser.punctualityScore > 70
+                    ? "Good standing"
+                    : "Needs improvement"}
                 </div>
               </CardContent>
             </Card>
 
+            {/* Consistency Streak */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
@@ -160,19 +182,22 @@ const Dashboard = () => {
               </CardHeader>
               <CardContent>
                 <div className="flex items-baseline">
-                  <span className="text-3xl font-bold">{currentUser.consistencyStreak.count}</span>
+                  <span className="text-3xl font-bold">
+                    {currentUser.consistencyStreak.count}
+                  </span>
                   <span className="ml-2 text-2xl">
                     {currentUser.consistencyStreak.count > 0 && "🔥"}
                   </span>
                 </div>
                 <div className="text-sm text-gray-500 mt-1">
-                  {currentUser.consistencyStreak.isActive 
-                    ? "Active streak" 
+                  {currentUser.consistencyStreak.isActive
+                    ? "Active streak"
                     : "Streak ended"}
                 </div>
               </CardContent>
             </Card>
 
+            {/* Status */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
@@ -192,17 +217,21 @@ const Dashboard = () => {
                   {isOnline ? "At Work" : "Not Checked In"}
                 </Badge>
                 <div className="mt-4">
-                  <BadgeDisplay badges={[]} />
+                  <BadgeDisplay badges={currentUser.badges} />
                 </div>
               </CardContent>
             </Card>
           </div>
         </section>
 
-        {/* Highlights Section */}
+        {/* Today's Highlights */}
         <section className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">Today's Highlights</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">
+            Today's Highlights
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+            {/* Earliest Check‑in */}
             <Card>
               <CardHeader>
                 <CardTitle>Earliest Check-in</CardTitle>
@@ -211,29 +240,25 @@ const Dashboard = () => {
               <CardContent>
                 {earliestCheckIn ? (
                   <div className="flex items-center">
-                    <div className="relative h-10 w-10 rounded-full overflow-hidden mr-3 bg-gray-200">
-                      {earliestCheckIn.employee.profileImage && (
-                        <img 
-                          src={earliestCheckIn.employee.profileImage} 
-                          alt={earliestCheckIn.employee.name}
-                          className="object-cover" 
-                        />
-                      )}
+                    <div className="text-xl font-semibold mr-3">
+                      {earliestCheckIn.employee.name}
                     </div>
-                    <div>
-                      <div className="font-semibold">{earliestCheckIn.employee.name}</div>
-                      <div className="text-sm text-gray-500">{formatTime(earliestCheckIn.time)}</div>
+                    <div className="text-sm text-gray-500">
+                      {formatTime(earliestCheckIn.time)}
                     </div>
                   </div>
                 ) : (
-                  <div className="text-gray-500 italic">No check-ins yet today</div>
+                  <div className="text-gray-500 italic">
+                    No check‑ins yet today
+                  </div>
                 )}
               </CardContent>
             </Card>
-            
+
+            {/* Latest Check‑out */}
             <Card>
               <CardHeader>
-                <CardTitle>Latest Check-out</CardTitle>
+                <CardTitle>Latest Check‑out</CardTitle>
                 <CardDescription>Last to leave yesterday</CardDescription>
               </CardHeader>
               <CardContent>
@@ -241,24 +266,31 @@ const Dashboard = () => {
                   <div className="flex items-center">
                     <div className="relative h-10 w-10 rounded-full overflow-hidden mr-3 bg-gray-200">
                       {latestCheckOut.employee.profileImage && (
-                        <img 
-                          src={latestCheckOut.employee.profileImage} 
-                          alt={latestCheckOut.employee.name} 
+                        <img
+                          src={latestCheckOut.employee.profileImage}
+                          alt={latestCheckOut.employee.name}
                           className="object-cover"
                         />
                       )}
                     </div>
                     <div>
-                      <div className="font-semibold">{latestCheckOut.employee.name}</div>
-                      <div className="text-sm text-gray-500">{formatTime(latestCheckOut.time)}</div>
+                      <div className="font-semibold">
+                        {latestCheckOut.employee.name}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {formatTime(latestCheckOut.time)}
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="text-gray-500 italic">No data available</div>
+                  <div className="text-gray-500 italic">
+                    No data available
+                  </div>
                 )}
               </CardContent>
             </Card>
-            
+
+            {/* Currently Online */}
             <Card>
               <CardHeader>
                 <CardTitle>Currently Online</CardTitle>
@@ -266,8 +298,10 @@ const Dashboard = () => {
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold">
-                  {employeeStats.filter(stat => stat.isOnline).length}
-                  <span className="text-base text-gray-500 ml-2">/ {employeeStats.length}</span>
+                  {employeeStats.filter((stat) => stat.isOnline).length}
+                  <span className="text-base text-gray-500 ml-2">
+                    / {employeeStats.length}
+                  </span>
                 </div>
                 <div className="mt-2">
                   <LiveActivityFeed activity={liveActivity} />
@@ -277,7 +311,7 @@ const Dashboard = () => {
           </div>
         </section>
 
-        {/* Leaderboards Section */}
+        {/* Leaderboards */}
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           <PunctualityLeaderboard stats={employeeStats} />
           <ConsistencyLeaderboard stats={employeeStats} />
