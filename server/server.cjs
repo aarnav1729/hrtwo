@@ -34,9 +34,7 @@ app.get("/api/work-progress", async (req, res) => {
     const empCode = req.query.empCode || "30874";
     const pool = await poolPromise;
 
-    const result = await pool
-      .request()
-      .input("empCode", mssql.VarChar, empCode)
+    const result = await pool.request().input("empCode", mssql.VarChar, empCode)
       .query(`
         SELECT TOP 1
           CONVERT(varchar(19), ATT_DATE, 120) AS inTimeStr
@@ -55,15 +53,15 @@ app.get("/api/work-progress", async (req, res) => {
 
     // Parse as local
     const inDate = new Date(inTimeStr);
-    const now    = new Date();
+    const now = new Date();
     const diffMs = now.getTime() - inDate.getTime();
 
-    const hoursWorked    = diffMs / (1000 * 60 * 60);
+    const hoursWorked = diffMs / (1000 * 60 * 60);
     const totalShiftMins = 9 * 60;
-    const minutesLeft    = Math.max(totalShiftMins - hoursWorked * 60, 0);
+    const minutesLeft = Math.max(totalShiftMins - hoursWorked * 60, 0);
 
     res.json({
-      inTime:      inTimeStr,
+      inTime: inTimeStr,
       hoursWorked,
       minutesLeft,
     });
@@ -79,28 +77,41 @@ app.get("/api/earliest-checkin", async (req, res) => {
   try {
     const pool = await poolPromise;
 
-    const result = await pool.request().query(`
+    // 1) Grab first cardno + local timestamp
+    const punch = await pool.request().query(`
       SELECT TOP 1
         CARDNO,
-        ATT_DATE AS checkInTime
+        CONVERT(varchar(19), ATT_DATE, 120) AS checkInTime
       FROM IDSL_PEL.DBO.SRAW
-      WHERE AREA_ID        = '30048'
-        AND LOWER(IN_OUT)  = 'in'
+      WHERE AREA_ID = '30048'
+        AND LOWER(IN_OUT) = 'in'
         AND CONVERT(date, ATT_DATE) = CONVERT(date, GETDATE())
       ORDER BY ATT_DATE ASC;
     `);
 
-    if (!result.recordset.length) {
+    if (!punch.recordset.length) {
       return res.status(404).json({ message: "No check‑in found today" });
     }
 
-    const { CARDNO, checkInTime } = result.recordset[0];
-    const iso = new Date(checkInTime).toISOString();
-    console.log("▶️  Earliest check‑in:", { CARDNO, iso });
+    const { CARDNO, checkInTime } = punch.recordset[0];
+    console.log("▶️  Raw earliest punch:", { CARDNO, checkInTime });
 
+    // 2) Lookup that CARDNO in EMPLOYEE to get FIRSTNAME
+    const emp = await pool.request().input("cardno", mssql.VarChar, CARDNO)
+      .query(`
+        SELECT TOP 1 FIRSTNAME
+        FROM IDSL_PEL.DBO.EMPLOYEE
+        WHERE EMP_CARDNO = @cardno;
+      `);
+
+    const firstname = emp.recordset.length
+      ? emp.recordset[0].FIRSTNAME
+      : `#${CARDNO}`;
+
+    // Return the name and the un‑zoned datetime string
     res.json({
-      cardNo:      CARDNO,
-      checkInTime: iso,
+      name: firstname,
+      checkInTime, // still "YYYY-MM-DD HH:mm:ss"
     });
   } catch (error) {
     console.error("❌ Error in /api/earliest-checkin:", error);
@@ -108,7 +119,77 @@ app.get("/api/earliest-checkin", async (req, res) => {
   }
 });
 
-// ─── Start Server ─────────────────────────────────────────────────
+// ─── Latest Check‑Out Endpoint ────────────────────────────────────
+// Returns who last checked‑out yesterday in AREA_ID = '30048'
+app.get("/api/latest-checkout", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    // 1) find yesterday’s last “out” punch + time
+    const punch = await pool.request().query(`
+           SELECT TOP 1
+             s.CARDNO,
+             CONVERT(varchar(19), s.ATT_DATE, 120) AS checkOutTime
+           FROM IDSL_PEL.DBO.SRAW AS s
+           WHERE LOWER(s.IN_OUT) = 'out'
+             AND CONVERT(date, s.ATT_DATE) = CONVERT(date, DATEADD(day, -1, GETDATE()))
+           ORDER BY s.ATT_DATE DESC;
+         `);
+    if (!punch.recordset.length) {
+      return res.status(404).json({ message: "No check‑out found yesterday" });
+    }
+    const { CARDNO, checkOutTime } = punch.recordset[0];
+    // 2) lookup that CARDNO in EMPLOYEE
+    const emp = await pool.request().input("cardno", mssql.VarChar, CARDNO)
+      .query(`
+        SELECT TOP 1 FIRSTNAME
+        FROM IDSL_PEL.DBO.EMPLOYEE
+        WHERE EMP_CARDNO = @cardno;
+      `);
+    const firstname = emp.recordset.length
+      ? emp.recordset[0].FIRSTNAME
+      : `#${CARDNO}`;
+    // respond with the name + local timestamp
+    res.json({
+      name: firstname,
+      checkOutTime,
+    });
+  } catch (error) {
+    console.error("❌ Error in /api/latest-checkout:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// ─── Recent Activity Endpoint ─────────────────────────────────────
+// Returns the 3 most recent punches (in/out) with employee name + local timestamp
+app.get("/api/recent-activity", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query(`
+      SELECT TOP 3
+        s.IN_OUT       AS action,
+        emp.FIRSTNAME  AS name,
+        CONVERT(varchar(19), s.ATT_DATE, 120) AS time
+      FROM IDSL_PEL.DBO.SRAW AS s
+      JOIN IDSL_PEL.DBO.EMPLOYEE AS emp
+        ON s.CARDNO = emp.EMP_CARDNO
+      ORDER BY s.ATT_DATE DESC;
+    `);
+
+    // shape it exactly for the frontend
+    const records = result.recordset.map(r => ({
+      action: r.action.toLowerCase(),  // "in" or "out"
+      name:   r.name,
+      time:   r.time                     // "YYYY-MM-DD HH:mm:ss"
+    }));
+
+    console.log("▶️  Recent activity:", records);
+    res.json(records);
+  } catch (error) {
+    console.error("❌ Error in /api/recent-activity:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
 });

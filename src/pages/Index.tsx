@@ -22,32 +22,32 @@ import {
 import { EmployeeStats, TeamStats } from "@/types";
 
 const Dashboard = () => {
-  const [employeeStats, setEmployeeStats]     = useState<EmployeeStats[]>([]);
-  const [teamStats, setTeamStats]             = useState<TeamStats[]>([]);
+  const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([]);
+  const [teamStats, setTeamStats] = useState<TeamStats[]>([]);
   const [earliestCheckIn, setEarliestCheckIn] = useState<{
     employee: any;
     time: Date;
   } | null>(null);
-  const [latestCheckOut, setLatestCheckOut]   = useState<{
+  const [latestCheckOut, setLatestCheckOut] = useState<{
     employee: any;
     time: Date;
   } | null>(null);
-  const [liveActivity, setLiveActivity]       = useState<any[]>([]);
-  const [currentTime, setCurrentTime]         = useState(new Date());
+  const [liveActivity, setLiveActivity] = useState<any[]>([]);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   // ─── Real work‑progress from server ────────────────────────────────
-  const [inTime, setInTime]           = useState<Date | null>(null);
+  const [inTime, setInTime] = useState<Date | null>(null);
   const [hoursWorked, setHoursWorked] = useState(0);
   const [minutesLeft, setMinutesLeft] = useState(9 * 60);
 
   // ─── mock fallback for other cards ──────────────────────────────────
   const [currentUser] = useState(() => ({
-    hoursWorkedToday:    0,
-    minutesLeftToday:    9 * 60,
-    punctualityScore:    0,
-    consistencyStreak:   { count: 0, isActive: false },
-    isOnline:            false,
-    badges:              [],
+    hoursWorkedToday: 0,
+    minutesLeftToday: 9 * 60,
+    punctualityScore: 0,
+    consistencyStreak: { count: 0, isActive: false },
+    isOnline: false,
+    badges: [],
   }));
 
   // ─── Fetch work‑progress ───────────────────────────────────────────
@@ -58,7 +58,11 @@ const Dashboard = () => {
         return res.json();
       })
       .then(({ inTime: str, hoursWorked, minutesLeft }) => {
-        console.log("💡 Work‑progress from server:", { str, hoursWorked, minutesLeft });
+        console.log("💡 Work‑progress from server:", {
+          str,
+          hoursWorked,
+          minutesLeft,
+        });
         setInTime(new Date(str));
         setHoursWorked(hoursWorked);
         setMinutesLeft(minutesLeft);
@@ -66,22 +70,55 @@ const Dashboard = () => {
       .catch((err) => console.error("Failed to load work‑progress:", err));
   }, []);
 
-  // ─── Fetch earliest check‑in ────────────────────────────────────────
-  // (runs on mount and whenever currentTime updates)
+  // ─── Fetch earliest check‑in WITH firstname ────────────────────────
   useEffect(() => {
     fetch("http://localhost:3001/api/earliest-checkin")
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
         return res.json();
       })
-      .then(({ cardNo, checkInTime }) => {
-        console.log("💡 Earliest check‑in from server:", { cardNo, checkInTime });
+      .then(({ name, checkInTime }) => {
         setEarliestCheckIn({
-          employee: { name: cardNo },
-          time:     new Date(checkInTime),
+          employee: { name },
+          time: new Date(checkInTime),
         });
       })
       .catch((err) => console.error("Failed to load earliest check‑in:", err));
+  }, [currentTime]);
+
+  useEffect(() => {
+    fetch("http://localhost:3001/api/latest-checkout")
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then(({ name, checkOutTime }) => {
+        setLatestCheckOut({
+          employee: { name },
+          time: new Date(checkOutTime),
+        });
+      })
+      .catch((err) => console.error("Failed to load latest check‑out:", err));
+  }, [currentTime]);
+
+  // ─── Fetch Recent Activity ────────────────────────────────────────
+  useEffect(() => {
+    fetch("http://localhost:3001/api/recent-activity")
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then((records: { action: string; name: string; time: string }[]) => {
+        // map into the LiveActivityFeed shape
+        setLiveActivity(
+          records.map((r) => ({
+            action: r.action === "in" ? "check-in" : "check-out",
+            employee: { name: r.name },
+            time: new Date(r.time),
+          }))
+        );
+      })
+      .catch((err) => console.error("Failed to load recent activity:", err));
   }, [currentTime]);
 
   // ─── Refresh the rest every minute ─────────────────────────────────
@@ -89,7 +126,7 @@ const Dashboard = () => {
     const update = () => {
       setEmployeeStats([]); // will wire up next
       setTeamStats(calculateTeamStats());
-      setLatestCheckOut(getLatestCheckOut());
+      setLatestCheckOut(latestCheckOut);
       setLiveActivity(getLiveActivity());
       setCurrentTime(new Date());
     };
@@ -121,11 +158,8 @@ const Dashboard = () => {
       <main className="max-w-7xl mx-auto px-4 py-6">
         {/* Your Status */}
         <section className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">
-            Your Status
-          </h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">Your Status</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-
             {/* Work Progress */}
             <Card>
               <CardHeader className="pb-2">
@@ -157,10 +191,14 @@ const Dashboard = () => {
                   <Award className="mr-2 h-5 w-5" />
                   Punctuality Score
                 </CardTitle>
-                <CardDescription>Based on your on-time arrivals</CardDescription>
+                <CardDescription>
+                  Based on your on-time arrivals
+                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">{currentUser.punctualityScore}%</div>
+                <div className="text-3xl font-bold">
+                  {currentUser.punctualityScore}%
+                </div>
                 <div className="text-sm text-gray-500 mt-1">
                   {currentUser.punctualityScore > 90
                     ? "Excellent! Keep it up!"
@@ -178,7 +216,7 @@ const Dashboard = () => {
                   <Timer className="mr-2 h-5 w-5" />
                   Consistency Streak
                 </CardTitle>
-                <CardDescription>Days on time in a row</CardDescription>
+                <CardDescription>Days at work in a row</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex items-baseline">
@@ -230,11 +268,10 @@ const Dashboard = () => {
             Today's Highlights
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
             {/* Earliest Check‑in */}
             <Card>
               <CardHeader>
-                <CardTitle>Earliest Check-in</CardTitle>
+                <CardTitle>Earliest Check‑in</CardTitle>
                 <CardDescription>First in the office today</CardDescription>
               </CardHeader>
               <CardContent>
@@ -264,36 +301,23 @@ const Dashboard = () => {
               <CardContent>
                 {latestCheckOut ? (
                   <div className="flex items-center">
-                    <div className="relative h-10 w-10 rounded-full overflow-hidden mr-3 bg-gray-200">
-                      {latestCheckOut.employee.profileImage && (
-                        <img
-                          src={latestCheckOut.employee.profileImage}
-                          alt={latestCheckOut.employee.name}
-                          className="object-cover"
-                        />
-                      )}
+                    <div className="text-xl font-semibold mr-3">
+                      {latestCheckOut.employee.name}
                     </div>
-                    <div>
-                      <div className="font-semibold">
-                        {latestCheckOut.employee.name}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {formatTime(latestCheckOut.time)}
-                      </div>
+                    <div className="text-sm text-gray-500">
+                      {formatTime(latestCheckOut.time)}
                     </div>
                   </div>
                 ) : (
-                  <div className="text-gray-500 italic">
-                    No data available
-                  </div>
+                  <div className="text-gray-500 italic">No data available</div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Currently Online */}
+            {/* Recent Activity */}
             <Card>
               <CardHeader>
-                <CardTitle>Currently Online</CardTitle>
+                <CardTitle>Recent Activity</CardTitle>
                 <CardDescription>Employees at work right now</CardDescription>
               </CardHeader>
               <CardContent>
