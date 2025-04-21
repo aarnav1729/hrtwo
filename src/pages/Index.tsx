@@ -40,6 +40,12 @@ const Dashboard = () => {
   const [hoursWorked, setHoursWorked] = useState(0);
   const [minutesLeft, setMinutesLeft] = useState(9 * 60);
 
+  // Consistency streak state
+  const [consistencyStreak, setConsistencyStreak] = useState<{
+    count: number;
+    isActive: boolean;
+  }>({ count: 0, isActive: false });
+
   // ─── mock fallback for other cards ──────────────────────────────────
   const [currentUser] = useState(() => ({
     hoursWorkedToday: 0,
@@ -120,6 +126,20 @@ const Dashboard = () => {
       })
       .catch((err) => console.error("Failed to load recent activity:", err));
   }, [currentTime]);
+
+  // ─── Fetch consistency streak ─────────────────────────────────────
+  useEffect(() => {
+    fetch("http://localhost:3001/api/consistency-streak?empCode=30874")
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then(({ count, isActive }) => {
+        console.log("💡 Consistency streak from server:", { count, isActive });
+        setConsistencyStreak({ count, isActive });
+      })
+      .catch((err) => console.error("Failed to load consistency streak:", err));
+  }, []);
 
   // ─── Refresh the rest every minute ─────────────────────────────────
   useEffect(() => {
@@ -213,22 +233,21 @@ const Dashboard = () => {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
-                  <Timer className="mr-2 h-5 w-5" />
-                  Consistency Streak
+                  <Timer className="mr-2 h-5 w-5" /> Consistency Streak
                 </CardTitle>
                 <CardDescription>Days at work in a row</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex items-baseline">
                   <span className="text-3xl font-bold">
-                    {currentUser.consistencyStreak.count}
+                    {consistencyStreak.count}
                   </span>
                   <span className="ml-2 text-2xl">
-                    {currentUser.consistencyStreak.count > 0 && "🔥"}
+                    {consistencyStreak.count > 0 && "🔥"}
                   </span>
                 </div>
                 <div className="text-sm text-gray-500 mt-1">
-                  {currentUser.consistencyStreak.isActive
+                  {consistencyStreak.isActive
                     ? "Active streak"
                     : "Streak ended"}
                 </div>

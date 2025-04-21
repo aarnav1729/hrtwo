@@ -190,6 +190,52 @@ app.get("/api/recent-activity", async (req, res) => {
   }
 });
 
+app.get("/api/consistency-streak", async (req, res) => {
+  try {
+    const empCode = req.query.empCode || "30874";
+    const pool    = await poolPromise;
+
+    // grab all distinct punch‑in dates up to today
+    const result = await pool
+      .request()
+      .input("empCode", mssql.VarChar, empCode)
+      .query(`
+        SELECT DISTINCT
+          CAST(ATT_DATE AS date) AS d
+        FROM IDSL_PEL.DBO.SRAW
+        WHERE EMP_CODE      = @empCode
+          AND LOWER(IN_OUT) = 'in'
+          AND CAST(ATT_DATE AS date) <= CAST(GETDATE() AS date)
+        ORDER BY d DESC;
+      `);
+
+    const dates = result.recordset.map(r => {
+      const dt = new Date(r.d);
+      dt.setHours(0,0,0,0);
+      return dt.getTime();
+    });
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    let count = 0;
+    for (let i = 0; i < dates.length; i++) {
+      if (dates[i] === today.getTime() - (1000*60*60*24)*i) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    const isActive = dates.length > 0 && dates[0] === today.getTime();
+
+    console.log("▶️  Consistency streak:", { count, isActive });
+    res.json({ count, isActive });
+  } catch (error) {
+    console.error("❌ Error in /api/consistency-streak:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
 });
