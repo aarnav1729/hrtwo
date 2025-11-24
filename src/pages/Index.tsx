@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+// src/pages/Index.tsx
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -14,14 +15,19 @@ import { ConsistencyLeaderboard } from "@/components/ConsistencyLeaderboard";
 import { TeamLeaderboard } from "@/components/TeamLeaderboard";
 import { BadgeDisplay } from "@/components/BadgeDisplay";
 import { LiveActivityFeed } from "@/components/LiveActivityFeed";
-import {
-  calculateTeamStats,
-  getLatestCheckOut,
-  getLiveActivity,
-} from "@/lib/mock-data";
 import { EmployeeStats, TeamStats } from "@/types";
 
 const Dashboard = () => {
+  const auth = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("auth") || "null");
+    } catch {
+      return null;
+    }
+  }, []);
+  const empId: string = auth?.empID || "";
+  const userName: string = auth?.firstname || auth?.name || "";
+
   const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([]);
   const [teamStats, setTeamStats] = useState<TeamStats[]>([]);
   const [earliestCheckIn, setEarliestCheckIn] = useState<{
@@ -35,7 +41,7 @@ const Dashboard = () => {
   const [liveActivity, setLiveActivity] = useState<any[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // ─── Real work‑progress from server ────────────────────────────────
+  // ─── Work-progress from server ─────────────────────────────────────
   const [inTime, setInTime] = useState<Date | null>(null);
   const [hoursWorked, setHoursWorked] = useState(0);
   const [minutesLeft, setMinutesLeft] = useState(9 * 60);
@@ -46,39 +52,55 @@ const Dashboard = () => {
     isActive: boolean;
   }>({ count: 0, isActive: false });
 
-  // ─── mock fallback for other cards ──────────────────────────────────
+  // NEW: last 50 punches
+  const [punches, setPunches] = useState<Array<{ time: Date; action: string }>>(
+    []
+  );
+  // Minutes spent OUT (from server)
+  const [minutesOut, setMinutesOut] = useState(0);
+
+  // Derive punctuality from today's first IN
+  const punctualityScore = useMemo(() => {
+    if (!inTime) return 0;
+    const cutoff = new Date(inTime);
+    cutoff.setHours(9, 15, 0, 0); // 9:15 AM cutoff
+    return inTime <= cutoff ? 100 : 60;
+  }, [inTime]);
+
+  // ─── mock fallback for badges only ─────────────────────────────────
   const [currentUser] = useState(() => ({
-    hoursWorkedToday: 0,
-    minutesLeftToday: 9 * 60,
-    punctualityScore: 0,
-    consistencyStreak: { count: 0, isActive: false },
-    isOnline: false,
     badges: [],
   }));
 
-  // ─── Fetch work‑progress ───────────────────────────────────────────
+  // ─── Fetch work-progress ───────────────────────────────────────────
   useEffect(() => {
-    fetch("http://localhost:3001/api/work-progress?empCode=30874")
+    if (!empId) return;
+    fetch(`/api/work-progress?empCode=${encodeURIComponent(empId)}`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
         return res.json();
       })
       .then(({ inTime: str, hoursWorked, minutesLeft }) => {
-        console.log("💡 Work‑progress from server:", {
-          str,
-          hoursWorked,
-          minutesLeft,
-        });
         setInTime(new Date(str));
         setHoursWorked(hoursWorked);
         setMinutesLeft(minutesLeft);
       })
-      .catch((err) => console.error("Failed to load work‑progress:", err));
-  }, []);
+      .catch((err) => console.error("Failed to load work-progress:", err));
+  }, [empId]);
 
-  // ─── Fetch earliest check‑in WITH firstname ────────────────────────
+  // ─── Fetch minutes-out ───────────────────────────────────────────────
   useEffect(() => {
-    fetch("http://localhost:3001/api/earliest-checkin")
+    if (!empId) return;
+
+    fetch(`/api/minutes-out?empCode=${encodeURIComponent(empId)}`)
+      .then((res) => res.json())
+      .then(({ totalMinutesOut }) => setMinutesOut(totalMinutesOut))
+      .catch((err) => console.error("Failed to load minutes-out:", err));
+  }, [empId]);
+
+  // ─── Fetch earliest check-in WITH firstname ────────────────────────
+  useEffect(() => {
+    fetch(`/api/earliest-checkin`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
         return res.json();
@@ -89,11 +111,12 @@ const Dashboard = () => {
           time: new Date(checkInTime),
         });
       })
-      .catch((err) => console.error("Failed to load earliest check‑in:", err));
+      .catch((err) => console.error("Failed to load earliest check-in:", err));
   }, [currentTime]);
 
+  // ─── Fetch latest check-out ────────────────────────────────────────
   useEffect(() => {
-    fetch("http://localhost:3001/api/latest-checkout")
+    fetch(`/api/latest-checkout`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
         return res.json();
@@ -104,18 +127,17 @@ const Dashboard = () => {
           time: new Date(checkOutTime),
         });
       })
-      .catch((err) => console.error("Failed to load latest check‑out:", err));
+      .catch((err) => console.error("Failed to load latest check-out:", err));
   }, [currentTime]);
 
-  // ─── Fetch Recent Activity ────────────────────────────────────────
+  // ─── Fetch Recent Activity ─────────────────────────────────────────
   useEffect(() => {
-    fetch("http://localhost:3001/api/recent-activity")
+    fetch(`/api/recent-activity`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
         return res.json();
       })
       .then((records: { action: string; name: string; time: string }[]) => {
-        // map into the LiveActivityFeed shape
         setLiveActivity(
           records.map((r) => ({
             action: r.action === "in" ? "check-in" : "check-out",
@@ -127,27 +149,60 @@ const Dashboard = () => {
       .catch((err) => console.error("Failed to load recent activity:", err));
   }, [currentTime]);
 
-  // ─── Fetch consistency streak ─────────────────────────────────────
+  // ─── Fetch consistency streak ──────────────────────────────────────
   useEffect(() => {
-    fetch("http://localhost:3001/api/consistency-streak?empCode=30874")
+    if (!empId) return;
+    fetch(`/api/consistency-streak?empCode=${encodeURIComponent(empId)}`)
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
         return res.json();
       })
       .then(({ count, isActive }) => {
-        console.log("💡 Consistency streak from server:", { count, isActive });
         setConsistencyStreak({ count, isActive });
       })
       .catch((err) => console.error("Failed to load consistency streak:", err));
-  }, []);
+  }, [empId]);
+
+  // ─── Dept team stats for logged-in user ────────────────────────────
+  useEffect(() => {
+    if (!empId) return;
+    fetch(`/api/team-punctuality?empId=${encodeURIComponent(empId)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data?.teams)) setTeamStats(data.teams);
+        if (Array.isArray(data?.members)) setEmployeeStats(data.members);
+      })
+      .catch((e) => console.warn("team-punctuality failed:", e));
+  }, [empId]);
+
+  // NEW: Fetch last 50 punches
+  useEffect(() => {
+    if (!empId) return;
+    fetch(
+      `/api/punches?empCode=${encodeURIComponent(
+        empId
+      )}&limit=${encodeURIComponent(50)}`
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText);
+        return res.json();
+      })
+      .then((rows: Array<{ time: string; action: string }>) =>
+        setPunches(
+          rows.map((r) => ({
+            time: new Date(r.time),
+            action: r.action,
+          }))
+        )
+      )
+      .catch((err) => console.error("Failed to load punches:", err));
+  }, [empId]);
 
   // ─── Refresh the rest every minute ─────────────────────────────────
   useEffect(() => {
     const update = () => {
-      setEmployeeStats([]); // will wire up next
-      setTeamStats(calculateTeamStats());
-      setLatestCheckOut(latestCheckOut);
-      setLiveActivity(getLiveActivity());
+      setLatestCheckOut((prev) => prev);
+      setLiveActivity((prev) => prev);
       setCurrentTime(new Date());
     };
     update();
@@ -162,15 +217,35 @@ const Dashboard = () => {
   // ─── Time formatter ────────────────────────────────────────────────
   const formatTime = (d: Date) =>
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const formatDateTime = (d: Date) =>
+    d.toLocaleString([], {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-6 flex justify-between items-center">
           <h1 className="text-3xl font-bold text-gray-900">hrtwo by nav</h1>
-          <div className="text-right">
-            <p className="text-sm text-gray-500">Current Time</p>
-            <p className="text-xl font-semibold">{formatTime(currentTime)}</p>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-sm text-gray-500">Current Time</p>
+              <p className="text-xl font-semibold">{formatTime(currentTime)}</p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("auth");
+                window.location.replace("/");
+              }}
+              className="px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
+              aria-label="Logout"
+            >
+              Logout
+            </button>
           </div>
         </div>
       </header>
@@ -178,7 +253,10 @@ const Dashboard = () => {
       <main className="max-w-7xl mx-auto px-4 py-6">
         {/* Your Status */}
         <section className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">Your Status</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">
+            Your Status: {userName}
+          </h2>
+
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {/* Work Progress */}
             <Card>
@@ -186,7 +264,7 @@ const Dashboard = () => {
                 <CardTitle className="text-lg flex items-center">
                   <Clock className="mr-2 h-5 w-5" /> Work Progress
                 </CardTitle>
-                <CardDescription>9‑hour shift</CardDescription>
+                <CardDescription>9-hour shift</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
@@ -197,34 +275,50 @@ const Dashboard = () => {
                   <div className="flex justify-between text-sm">
                     <span>{hoursWorked.toFixed(1)} hours worked</span>
                     <span>
-                      {Math.floor(minutesLeft / 60)}h {minutesLeft % 60}m left
+                      {Math.floor(minutesLeft / 60)}h{" "}
+                      {Math.round(minutesLeft % 60)}m left
                     </span>
                   </div>
+
+                  {/* Show actual check-in time */}
+                  {inTime ? (
+                    <div className="text-sm text-gray-600">
+                      Checked in at{" "}
+                      <span className="font-medium">{formatTime(inTime)}</span>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500 italic">
+                      Not checked in today
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
 
             {/* Punctuality Score */}
+            {/* Minutes Out */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-lg flex items-center">
-                  <Award className="mr-2 h-5 w-5" />
-                  Punctuality Score
+                  <Timer className="mr-2 h-5 w-5" /> Minutes Out
                 </CardTitle>
                 <CardDescription>
-                  Based on your on-time arrivals
+                  Total time spent outside today
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold">
-                  {currentUser.punctualityScore}%
+                  {Math.floor(minutesOut)} min
                 </div>
+
                 <div className="text-sm text-gray-500 mt-1">
-                  {currentUser.punctualityScore > 90
-                    ? "Excellent! Keep it up!"
-                    : currentUser.punctualityScore > 70
-                    ? "Good standing"
-                    : "Needs improvement"}
+                  {minutesOut === 0
+                    ? "No breaks recorded"
+                    : minutesOut < 30
+                    ? "Great! Short breaks today"
+                    : minutesOut < 60
+                    ? "Moderate break duration"
+                    : "Long break duration"}
                 </div>
               </CardContent>
             </Card>
@@ -281,85 +375,82 @@ const Dashboard = () => {
           </div>
         </section>
 
-        {/* Today's Highlights */}
+        {/* NEW: Last 50 Punches */}
         <section className="mb-8">
           <h2 className="text-2xl font-bold text-gray-800 mb-4">
-            Today's Highlights
+            Punch History
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Earliest Check‑in */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Earliest Check‑in</CardTitle>
-                <CardDescription>First in the office today</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {earliestCheckIn ? (
-                  <div className="flex items-center">
-                    <div className="text-xl font-semibold mr-3">
-                      {earliestCheckIn.employee.name}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {formatTime(earliestCheckIn.time)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-gray-500 italic">
-                    No check‑ins yet today
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Latest Check‑out */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Latest Check‑out</CardTitle>
-                <CardDescription>Last to leave yesterday</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {latestCheckOut ? (
-                  <div className="flex items-center">
-                    <div className="text-xl font-semibold mr-3">
-                      {latestCheckOut.employee.name}
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {formatTime(latestCheckOut.time)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-gray-500 italic">No data available</div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Recent Activity */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Activity</CardTitle>
-                <CardDescription>Employees at work right now</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">
-                  {employeeStats.filter((stat) => stat.isOnline).length}
-                  <span className="text-base text-gray-500 ml-2">
-                    / {employeeStats.length}
-                  </span>
-                </div>
-                <div className="mt-2">
-                  <LiveActivityFeed activity={liveActivity} />
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Last 50 Punches</CardTitle>
+              <CardDescription>Most recent first</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">
+                        Date &amp; Time
+                      </th>
+                      <th className="px-3 py-2 text-left font-medium">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {punches.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={2}
+                          className="px-3 py-4 text-gray-500 italic"
+                        >
+                          No punches found
+                        </td>
+                      </tr>
+                    ) : (
+                      punches.map((p, i) => (
+                        <tr key={i} className="hover:bg-gray-50/60">
+                          <td className="px-3 py-2">
+                            {isNaN(p.time.getTime())
+                              ? "-"
+                              : formatDateTime(p.time)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                                p.action === "in"
+                                  ? "bg-green-100 text-green-800"
+                                  : p.action === "out"
+                                  ? "bg-red-100 text-red-800"
+                                  : "bg-gray-100 text-gray-800"
+                              }`}
+                            >
+                              {p.action === "in"
+                                ? "In"
+                                : p.action === "out"
+                                ? "Out"
+                                : p.action || "-"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
         </section>
 
-        {/* Leaderboards */}
+        {/*
+        // If you want to bring these back later:
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           <PunctualityLeaderboard stats={employeeStats} />
           <ConsistencyLeaderboard stats={employeeStats} />
           <TeamLeaderboard teams={teamStats} />
         </section>
+        */}
       </main>
     </div>
   );
