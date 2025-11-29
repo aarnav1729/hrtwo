@@ -135,6 +135,83 @@ app.get("/api/work-progress", async (req, res) => {
   }
 });
 
+// First IN, Last OUT and Hours Worked for a specific day
+app.get("/api/day-summary", async (req, res) => {
+  try {
+    const empCode = String(req.query.empCode || "").trim();
+    const dateStr = String(req.query.date || "").trim(); // expected YYYY-MM-DD
+
+    if (!empCode) {
+      return res.status(400).json({ message: "empCode required" });
+    }
+    if (!dateStr) {
+      return res.status(400).json({ message: "date (YYYY-MM-DD) required" });
+    }
+
+    const pool = await poolPromise;
+
+    // FIRST IN on that date
+    const firstInResult = await pool
+      .request()
+      .input("empCode", mssql.VarChar, empCode)
+      .input("date", mssql.Date, dateStr).query(`
+        SELECT TOP 1
+          ATT_DATE AS inTime,
+          CONVERT(varchar(19), ATT_DATE, 120) AS inTimeStr
+        FROM IDSL_PEL.DBO.SRAW
+        WHERE EMP_CODE = @empCode
+          AND LOWER(IN_OUT) = 'in'
+          AND CONVERT(date, ATT_DATE) = @date
+        ORDER BY ATT_DATE ASC;
+      `);
+
+    // LAST OUT on that date
+    const lastOutResult = await pool
+      .request()
+      .input("empCode", mssql.VarChar, empCode)
+      .input("date", mssql.Date, dateStr).query(`
+        SELECT TOP 1
+          ATT_DATE AS outTime,
+          CONVERT(varchar(19), ATT_DATE, 120) AS outTimeStr
+        FROM IDSL_PEL.DBO.SRAW
+        WHERE EMP_CODE = @empCode
+          AND LOWER(IN_OUT) = 'out'
+          AND CONVERT(date, ATT_DATE) = @date
+        ORDER BY ATT_DATE DESC;
+      `);
+
+    if (!firstInResult.recordset.length && !lastOutResult.recordset.length) {
+      return res.status(404).json({ message: "No punches for this date" });
+    }
+
+    const inRow = firstInResult.recordset[0] || null;
+    const outRow = lastOutResult.recordset[0] || null;
+
+    const inTimeStr = inRow ? inRow.inTimeStr : null;
+    const outTimeStr = outRow ? outRow.outTimeStr : null;
+
+    let hoursWorkedHours = null;
+    if (inRow && outRow) {
+      const inDate = new Date(inRow.inTime);
+      const outDate = new Date(outRow.outTime);
+      const diffMs = outDate - inDate;
+      if (diffMs > 0) {
+        hoursWorkedHours = diffMs / (1000 * 60 * 60); // hours as float
+      }
+    }
+
+    res.json({
+      date: dateStr,
+      inTime: inTimeStr,
+      outTime: outTimeStr,
+      hoursWorkedHours,
+    });
+  } catch (error) {
+    console.error("❌ Error in /api/day-summary:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 // Earliest Check-In today
 app.get("/api/earliest-checkin", async (_req, res) => {
   try {

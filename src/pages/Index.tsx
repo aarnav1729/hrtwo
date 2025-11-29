@@ -72,6 +72,19 @@ const Dashboard = () => {
     badges: [],
   }));
 
+  // Day snapshot: first in, last out, hours worked for a chosen day
+  const [selectedDate, setSelectedDate] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
+  const [daySummary, setDaySummary] = useState<{
+    date: string;
+    inTime: Date | null;
+    outTime: Date | null;
+    hoursWorkedHours: number | null;
+  } | null>(null);
+  const [daySummaryError, setDaySummaryError] = useState<string | null>(null);
+  const [daySummaryLoading, setDaySummaryLoading] = useState(false);
+
   // ─── Fetch work-progress ───────────────────────────────────────────
   useEffect(() => {
     if (!empId) return;
@@ -210,6 +223,46 @@ const Dashboard = () => {
     return () => clearInterval(id);
   }, []);
 
+  // ─── Fetch day summary (first in, last out, hours worked) ────────────────
+  useEffect(() => {
+    if (!empId || !selectedDate) return;
+
+    setDaySummaryLoading(true);
+    setDaySummaryError(null);
+
+    fetch(
+      `/api/day-summary?empCode=${encodeURIComponent(
+        empId
+      )}&date=${encodeURIComponent(selectedDate)}`
+    )
+      .then(async (res) => {
+        if (res.status === 404) {
+          setDaySummary(null);
+          setDaySummaryError("No punches for this date");
+          return;
+        }
+        if (!res.ok) {
+          throw new Error(res.statusText);
+        }
+        const data = await res.json();
+        setDaySummary({
+          date: data.date,
+          inTime: data.inTime ? new Date(data.inTime) : null,
+          outTime: data.outTime ? new Date(data.outTime) : null,
+          hoursWorkedHours:
+            typeof data.hoursWorkedHours === "number"
+              ? data.hoursWorkedHours
+              : null,
+        });
+      })
+      .catch((err) => {
+        console.error("Failed to load day-summary:", err);
+        setDaySummary(null);
+        setDaySummaryError("Failed to load");
+      })
+      .finally(() => setDaySummaryLoading(false));
+  }, [empId, selectedDate]);
+
   // ─── Determine “At Work” status ────────────────────────────────────
   const isOnline =
     inTime !== null && inTime.toDateString() === new Date().toDateString();
@@ -225,6 +278,13 @@ const Dashboard = () => {
       hour: "2-digit",
       minute: "2-digit",
     });
+
+  const formatHours = (h: number) => {
+    const totalMinutes = Math.round(h * 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m`;
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -373,6 +433,88 @@ const Dashboard = () => {
               </CardContent>
             </Card>
           </div>
+        </section>
+
+        {/* Day Snapshot: First In, Last Out, Hours Worked */}
+        <section className="mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-2xl font-bold text-gray-800">Day Snapshot</h2>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600" htmlFor="day-date">
+                Select date
+              </label>
+              <input
+                id="day-date"
+                type="date"
+                className="border rounded-md px-2 py-1 text-sm"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <Card>
+            <CardHeader className="pb-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <div>
+                <CardTitle className="text-lg">First In / Last Out</CardTitle>
+                <CardDescription>
+                  Snapshot for{" "}
+                  {selectedDate
+                    ? new Date(selectedDate + "T00:00:00").toLocaleDateString(
+                        [],
+                        { year: "numeric", month: "short", day: "2-digit" }
+                      )
+                    : "-"}
+                </CardDescription>
+              </div>
+              {daySummaryLoading && (
+                <span className="text-xs text-gray-500">Loading…</span>
+              )}
+            </CardHeader>
+            <CardContent>
+              {daySummaryError && (
+                <div className="text-sm text-red-600 mb-2">
+                  {daySummaryError}
+                </div>
+              )}
+
+              {!daySummary && !daySummaryError && !daySummaryLoading && (
+                <div className="text-sm text-gray-500 italic">
+                  No data available
+                </div>
+              )}
+
+              {daySummary && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500 mb-1">First In</p>
+                    <p className="text-base font-semibold">
+                      {daySummary.inTime && !isNaN(daySummary.inTime.getTime())
+                        ? formatTime(daySummary.inTime)
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 mb-1">Last Out</p>
+                    <p className="text-base font-semibold">
+                      {daySummary.outTime &&
+                      !isNaN(daySummary.outTime.getTime())
+                        ? formatTime(daySummary.outTime)
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 mb-1">Hours Worked</p>
+                    <p className="text-base font-semibold">
+                      {typeof daySummary.hoursWorkedHours === "number"
+                        ? formatHours(daySummary.hoursWorkedHours)
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </section>
 
         {/* NEW: Last 50 Punches */}
